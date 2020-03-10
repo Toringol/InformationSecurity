@@ -23,6 +23,7 @@ type Opts struct {
 }
 
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
+	log.Println("Tunneling")
 	dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -53,12 +54,19 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 }
 
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
+	log.Println("HTTP: ", req.Header)
 	resp, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+
 	defer resp.Body.Close()
+
+	err = storage.Store(req, resp)
+	if err != nil {
+		log.Println("Unable to store round trip result, err:", err)
+	}
 
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
