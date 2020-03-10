@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"crypto/md5"
 	"crypto/tls"
+	"encoding/base32"
 	"flag"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -22,8 +27,54 @@ type Opts struct {
 	Proto   string
 }
 
+func Store(req *http.Request) (err error) {
+	buf := bytes.NewBuffer(make([]byte, 0))
+	err = req.Write(buf)
+	if err != nil {
+		log.Println("Unable to write request to buffer, err:", err)
+		return
+	}
+
+	hash := md5.Sum(buf.Bytes())
+	strHash := base32.StdEncoding.EncodeToString(hash[:])
+	var requestLine []byte
+	reqBuf := bufio.NewReader(buf)
+	requestLine, _, err = reqBuf.ReadLine()
+	if err != nil {
+		log.Println("Unable to read request line from buffer, err:", err)
+		return
+	}
+	log.Println(string(requestLine), strHash)
+
+	fileName := strHash
+	if _, err = os.Stat(fileName); os.IsNotExist(err) {
+		var file *os.File
+		file, err = os.Create("history/" + fileName)
+		if err != nil {
+			log.Println("Unable to create new storing file, err:", err)
+			return
+		}
+		defer file.Close()
+
+		_, err = file.Write(append(append(requestLine, byte('\r')), byte('\n')))
+		if err != nil {
+			log.Println("Unable to write request line to file, err", err)
+			return
+		}
+
+		_, err = reqBuf.WriteTo(file)
+		if err != nil {
+			log.Println("Unable to write buffer to file, error:", err)
+			return
+		}
+	} else {
+		//Storing already exist (err = nil) or it is unexpected error
+		return
+	}
+	return nil
+}
+
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
-	log.Println("Tunneling")
 	dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -63,11 +114,6 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 
 	defer resp.Body.Close()
 
-	err = storage.Store(req, resp)
-	if err != nil {
-		log.Println("Unable to store round trip result, err:", err)
-	}
-
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
@@ -97,6 +143,12 @@ func main() {
 	server := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+			err := Store(r)
+			if err != nil {
+				log.Println("Unable to store round trip result, err:", err)
+			}
+
 			if r.Method == http.MethodConnect {
 				handleTunneling(w, r)
 			} else {
