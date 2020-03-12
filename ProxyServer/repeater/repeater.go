@@ -2,11 +2,14 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/gorilla/mux"
 )
@@ -61,17 +64,34 @@ func Resend(writer http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	log.Println(repReq.Host)
-	log.Println(repReq.URL.RawPath)
-	log.Println(repReq.URL.RawQuery)
-
-	request, err := http.NewRequest(repReq.Method, "http://"+repReq.Host, repReq.Body)
+	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		log.Println(err)
-		return
 	}
+
+	request, err := http.NewRequest(repReq.Method, repReq.URL.RawPath, strings.NewReader(string(body)))
+	if err != nil {
+		log.Println(err)
+	}
+
+	u, err := url.Parse("http://" + repReq.Host)
+	if err != nil {
+		log.Println(err)
+	}
+
+	request.RequestURI = ""
+	request.URL.Scheme = strings.ToLower(strings.Split(repReq.Proto, "/")[0])
+	request.URL.Host = u.Hostname()
+
+	RepeaterClient = &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
 	response, err := RepeaterClient.Do(request)
 	if err != nil {
+		log.Println("Error here")
 		log.Println(err)
 		return
 	}
