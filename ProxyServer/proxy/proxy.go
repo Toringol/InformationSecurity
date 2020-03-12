@@ -20,6 +20,13 @@ var (
 
 var rootCertificate certificates.Cert
 
+func init() {
+	err := os.MkdirAll(historyPath, os.ModeDir|os.ModePerm)
+	if err != nil && err != os.ErrExist {
+		log.Fatal("Unable to create directory by storing path", err)
+	}
+}
+
 func Store(req *http.Request) (err error) {
 	buf := bytes.NewBuffer(make([]byte, 0))
 	err = req.Write(buf)
