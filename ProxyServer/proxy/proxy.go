@@ -6,30 +6,19 @@ import (
 	"crypto/md5"
 	"crypto/tls"
 	"encoding/base32"
-	"flag"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
-	"time"
+
+	"github.com/Toringol/InformationSecurity/ProxyServer/certificates"
 )
 
 var (
-	historyPath = "history/"
+	historyPath = "../history/"
 )
 
-var (
-	pemPath = flag.String("pem", "server.pem", "Path to pem file")
-	keyPath = flag.String("key", "server.key", "Path to key file")
-	proto   = flag.String("proto", "https", "Proxy protocol (http or https)")
-)
-
-type Opts struct {
-	PemPath string
-	KeyPath string
-	Proto   string
-}
+var rootCertificate certificates.Cert
 
 func Store(req *http.Request) (err error) {
 	buf := bytes.NewBuffer(make([]byte, 0))
@@ -79,13 +68,23 @@ func Store(req *http.Request) (err error) {
 }
 
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
-	dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+	cert, err := certificates.CreateLeafCertificate(r.Host)
+	if err != nil {
+		log.Println(err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{*cert},
+		GetCertificate: func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return certificates.CreateLeafCertificate(info.ServerName)
+		},
+	}
+
+	dest_conn, err := tls.Dial("tcp", r.Host, tlsConfig)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-
-	w.WriteHeader(http.StatusOK)
 
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
@@ -97,15 +96,25 @@ func handleTunneling(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	}
+	_, err = client_conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 
-	go transfer(dest_conn, client_conn)
-	go transfer(client_conn, dest_conn)
+	tlsConnection := tls.Server(client_conn, tlsConfig)
+	err = tlsConnection.Handshake()
+
+	go transfer(dest_conn, tlsConnection, true, r.URL.Host)
+	go transfer(tlsConnection, dest_conn, false, r.URL.Host)
 }
 
-func transfer(destination io.WriteCloser, source io.ReadCloser) {
+func transfer(destination io.WriteCloser, source io.ReadCloser, copy bool, requestHost string) {
 	defer destination.Close()
 	defer source.Close()
-	io.Copy(destination, source)
+	if copy {
+		buffer := &bytes.Buffer{}
+		duplicateSources := io.MultiWriter(destination, buffer) //we copy data from source into buffer and destination
+		io.Copy(duplicateSources, source)
+	} else {
+		io.Copy(destination, source)
+	}
 }
 
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
@@ -132,17 +141,6 @@ func copyHeader(dst, src http.Header) {
 }
 
 func main() {
-	flag.Parse()
-
-	opts := Opts{
-		PemPath: *pemPath,
-		KeyPath: *keyPath,
-		Proto:   *proto,
-	}
-
-	if opts.Proto != "http" && opts.Proto != "https" {
-		log.Fatal("Protocol must be either http or https")
-	}
 
 	server := &http.Server{
 		Addr: ":8080",
@@ -162,9 +160,12 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 	}
 
-	if opts.Proto == "http" {
-		log.Fatal(server.ListenAndServe())
-	} else {
-		log.Fatal(server.ListenAndServeTLS(opts.PemPath, opts.KeyPath))
+	rootCertificate = certificates.GetRootCertificate()
+
+	err := server.ListenAndServe()
+	if err != nil {
+		log.Fatal(err)
+		return
 	}
+
 }

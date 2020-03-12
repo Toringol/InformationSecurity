@@ -1,8 +1,7 @@
 # ProxyServer
 
-# Test saving request and proxy
+# Proxy
 go run main.go
-google-chrome --proxy-server=https://localhost:8080
 
 # Repeater test
 go run repeater/repeater.go
