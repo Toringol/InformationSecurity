@@ -16,8 +16,12 @@ import (
 )
 
 var (
-	pemPath = flag.String("pem", "server.pem", "path to pem file")
-	keyPath = flag.String("key", "server.key", "path to key file")
+	historyPath = "history/"
+)
+
+var (
+	pemPath = flag.String("pem", "server.pem", "Path to pem file")
+	keyPath = flag.String("key", "server.key", "Path to key file")
 	proto   = flag.String("proto", "https", "Proxy protocol (http or https)")
 )
 
@@ -49,7 +53,7 @@ func Store(req *http.Request) (err error) {
 	fileName := strHash
 	if _, err = os.Stat(fileName); os.IsNotExist(err) {
 		var file *os.File
-		file, err = os.Create("history/" + fileName)
+		file, err = os.Create(historyPath + fileName)
 		if err != nil {
 			log.Println("Unable to create new storing file, err:", err)
 			return
