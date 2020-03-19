@@ -11,3 +11,7 @@ sudo docker run -i -t --name scanner -t scanner
 It takes params from file and trying to make get request
 If request has status 200 and has different content length
 It will be added to check list
+
+# TODO
+Think about normal heuristic and make multi processing
+It`s too slow now (it can work for 10 minutes with 24k parameters)
