@@ -7,35 +7,65 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
 var (
-	dbPath    = "params.txt"
+	dbPath    = "params"
 	heuristic = 0
 )
 
 func Requester(url string) ([]string, error) {
 	urlToCheck := []string{}
+
+	wg := sync.WaitGroup{}
+	var mutex = &sync.Mutex{}
+
+	fmt.Println(url)
+
+	files, err := ioutil.ReadDir(dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, file := range files {
+		wg.Add(1)
+		filePath := dbPath + "/" + file.Name()
+		go func(filePath string) {
+			Process(filePath, url, urlToCheck, mutex)
+			wg.Done()
+		}(filePath)
+	}
+
+	wg.Wait()
+
+	return urlToCheck, nil
+}
+
+func Process(fileName string, url string, urlToCheck []string, mu *sync.Mutex) {
+	wg := sync.WaitGroup{}
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	fmt.Println(url)
+	log.Println(fileName, " Starting...")
 
-	file, err := os.Open(dbPath)
+	file, err := os.Open(fileName)
 	if err != nil {
-		return urlToCheck, err
+		log.Println(err)
+		return
 	}
-	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
+		wg.Add(1)
 		getParametr := scanner.Text()
 
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
-			return urlToCheck, err
+			log.Println(err)
+			return
 		}
 		req.Header.Add("Accept", "application/json")
 
@@ -51,20 +81,26 @@ func Requester(url string) ([]string, error) {
 		}
 
 		defer resp.Body.Close()
-		resp_body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Println(err)
-		}
+		go func(resp *http.Response) {
+			respBody, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Println(err)
+			}
 
-		respLen := float64(len(resp_body))
-		if resp.Status == "200" && (respLen < float64(heuristic)*0.75 || respLen > float64(heuristic)*1.25) {
-			urlToCheck = append(urlToCheck, url)
-		}
+			respLen := float64(len(respBody))
+			if resp.Status == "200" && (respLen < float64(heuristic)*0.75 || respLen > float64(heuristic)*1.25) {
+				mu.Lock()
+				urlToCheck = append(urlToCheck, url)
+				mu.Unlock()
+			}
+
+			wg.Done()
+		}(resp)
 
 		q.Del(getParametr)
 	}
 
-	return urlToCheck, nil
+	wg.Wait()
 }
 
 func Heuristic(url string) error {
@@ -87,12 +123,12 @@ func Heuristic(url string) error {
 	}
 
 	defer resp.Body.Close()
-	resp_body, err := ioutil.ReadAll(resp.Body)
+	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	heuristic = len(resp_body)
+	heuristic = len(respBody)
 
 	return nil
 }
